@@ -60,6 +60,7 @@ Own Pay is a community-first project. Even before the code drop, you can help us
 ## 🔗 Stay Connected
 Follow the development journey and join the discussion:
 - **Facebook Discussion:** [Join the conversation](https://www.facebook.com/share/p/1HsvshfrLr/)
+- **GitHub Issues:** [Share feedback or report bugs](https://github.com/own-pay/ownpay/issues)
 
 ---
 
