@@ -49,6 +49,14 @@ trait AdminPageTrait
         $data['app_name']    = $appName;
         $data['app_version'] = $appVersion;
         $data['csrf_token']  = \OwnPay\Security\SecurityHelpers::csrfToken();
+        $cspNonce = '';
+        if ($c->has(\OwnPay\Security\CspNonce::class)) {
+            $cspNonceObj = $c->get(\OwnPay\Security\CspNonce::class);
+            if ($cspNonceObj instanceof \OwnPay\Security\CspNonce) {
+                $cspNonce = $cspNonceObj->getNonce();
+            }
+        }
+        $data['csp_nonce'] = $cspNonce;
         $data['current_user'] = $session->currentUser();
         $data['is_superadmin']   = $session->isSuperadmin();
 

@@ -294,35 +294,56 @@ final class SettingsRenderer
         $nonceAttr = $cspNonce !== '' ? ' nonce="' . self::e($cspNonce) . '"' : '';
         return '
 <script' . $nonceAttr . '>
-document.addEventListener("DOMContentLoaded", function() {
-    var btn = document.getElementById("op-test-connection-btn");
-    var form = document.getElementById("op-settings-form");
-    var resultEl = document.getElementById("op-test-connection-result");
-    if (!btn || !form || !resultEl) return;
+(function() {
+    function initTestConnection() {
+        var btn = document.getElementById("op-test-connection-btn");
+        var form = document.getElementById("op-settings-form");
+        var resultEl = document.getElementById("op-test-connection-result");
+        if (!btn || !form || !resultEl) return;
 
-    btn.addEventListener("click", function() {
-        resultEl.className = "op-test-connection-result op-test-connection-pending";
-        resultEl.textContent = "Testing connection…";
-        btn.disabled = true;
+        btn.addEventListener("click", function() {
+            resultEl.className = "op-test-connection-result op-test-connection-pending";
+            resultEl.textContent = "Testing connection…";
+            btn.disabled = true;
 
-        fetch(btn.getAttribute("data-url"), {
-            method: "POST",
-            body: new FormData(form),
-            headers: { "X-Requested-With": "XMLHttpRequest" }
-        })
-            .then(function(res) { return res.json(); })
-            .then(function(data) {
-                var ok = !!data.success;
-                resultEl.className = "op-test-connection-result " + (ok ? "op-test-connection-ok" : "op-test-connection-fail");
-                resultEl.textContent = (ok ? "✓ " : "✗ ") + (data.message || (ok ? "Connected." : "Connection failed."));
+            var formData = new FormData(form);
+
+            fetch(btn.getAttribute("data-url"), {
+                method: "POST",
+                body: formData,
+                headers: { "X-Requested-With": "XMLHttpRequest" }
             })
-            .catch(function() {
-                resultEl.className = "op-test-connection-result op-test-connection-fail";
-                resultEl.textContent = "✗ Could not reach the server. Please try again.";
-            })
-            .finally(function() { btn.disabled = false; });
-    });
-});
+                .then(function(res) {
+                    return res.json().then(function(data) {
+                        return { ok: res.ok, data: data };
+                    }).catch(function() {
+                        return { ok: res.ok, data: { success: false, message: "Invalid server response (" + res.status + ")" } };
+                    });
+                })
+                .then(function(result) {
+                    var data = result.data || {};
+                    var ok = !!data.success;
+                    if (data._csrf_token) {
+                        var csrfInput = form.querySelector(\'input[name="_csrf_token"]\');
+                        if (csrfInput) { csrfInput.value = data._csrf_token; }
+                    }
+                    resultEl.className = "op-test-connection-result " + (ok ? "op-test-connection-ok" : "op-test-connection-fail");
+                    resultEl.textContent = (ok ? "✓ " : "✗ ") + (data.message || (ok ? "Connected." : "Connection failed."));
+                })
+                .catch(function() {
+                    resultEl.className = "op-test-connection-result op-test-connection-fail";
+                    resultEl.textContent = "✗ Could not reach the server. Please try again.";
+                })
+                .finally(function() { btn.disabled = false; });
+        });
+    }
+
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", initTestConnection);
+    } else {
+        initTestConnection();
+    }
+})();
 </script>
 ';
     }

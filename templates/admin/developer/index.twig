@@ -6,8 +6,20 @@
 {% block content %}
 <div class="op-page-header">
     <div>
-        <h1>Developer Hub</h1>
-        <p class="op-page-subtitle">Access API keys, endpoint reference docs, webhook configurations, and rate limits.</p>
+        <h1>Developer Hub
+            {% if active_brand %}
+                <span class="op-badge op-badge-info op-ml-2">{{ active_brand.name }}</span>
+            {% else %}
+                <span class="op-badge op-badge-secondary op-ml-2">Global Platform</span>
+            {% endif %}
+        </h1>
+        <p class="op-page-subtitle">
+            {% if active_brand %}
+                Manage API keys, webhook endpoints, and API integration for {{ active_brand.name }}.
+            {% else %}
+                Access API keys, endpoint reference docs, webhook configurations, and rate limits.
+            {% endif %}
+        </p>
     </div>
     <a href="https://docs.ownpay.org" class="op-btn op-btn-outline" target="_blank" rel="external">
         <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" class="op-mr-1"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
@@ -18,7 +30,9 @@
 <div class="op-tabs" id="dev-tabs">
     <button class="op-tab active" data-tab="api-keys">API Keys</button>
     <button class="op-tab" data-tab="webhooks">Webhooks</button>
+    {% if is_superadmin and (active_brand_id is empty or active_brand_id == 0) %}
     <button class="op-tab" data-tab="rate-limits">Rate Limits</button>
+    {% endif %}
 </div>
 
 {# ══════════════════════════════════════════════════════════
@@ -62,8 +76,19 @@
     {% endif %}
 
     <div class="op-card">
-        <div class="op-card-header"><h3>Generate New API Key</h3></div>
+        <div class="op-card-header">
+            <h3>Generate New API Key{% if active_brand %} for {{ active_brand.name }}{% endif %}</h3>
+        </div>
         <div class="op-card-body">
+            {% if is_global_view %}
+            <div class="op-alert op-alert-info op-mb-3">
+                <strong>Global Scope:</strong> Generating an API key in Global View creates a platform-level key. To create a key for a specific brand/store, switch to that brand using the brand switcher above.
+            </div>
+            {% else %}
+            <div class="op-alert op-alert-info op-mb-3">
+                <strong>Brand Scoped:</strong> This API key will be bound strictly to <strong>{{ active_brand.name }}</strong>. All transactions, customers, and operations created with this key will belong to this brand.
+            </div>
+            {% endif %}
             <form method="POST" action="/admin/api-keys/generate" class="op-form">
                 <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
                 <div class="op-form-row">
@@ -83,10 +108,12 @@
                                 <input type="checkbox" name="scopes[]" value="write" checked>
                                 <span>Write</span>
                             </label>
+                            {% if is_superadmin %}
                             <label class="op-scope-label op-text-danger op-font-semibold">
                                 <input type="checkbox" name="scopes[]" value="admin">
                                 <span>Admin (Administrative Access)</span>
                             </label>
+                            {% endif %}
                         </div>
                         <small class="op-text-muted op-display-block op-mt-1">Select the operations this key is permitted to perform</small>
                     </div>
@@ -108,17 +135,33 @@
 
     <div class="op-card op-mt-4">
         <div class="op-card-header">
-            <h3>Existing Keys</h3>
+            <h3>Existing Keys{% if active_brand %} for {{ active_brand.name }}{% else %} (Platform / All Brands){% endif %}</h3>
             <span class="op-text-muted op-text-sm">Use Bearer token authentication: <code>Authorization: Bearer &lt;key&gt;</code></span>
         </div>
         <div class="op-card-body op-p-0">
             <div class="op-table-responsive">
             <table class="op-table">
-                <thead><tr><th>Label</th><th>Key Prefix</th><th>Scopes</th><th>Status</th><th>Created</th><th>Last Used</th><th>Actions</th></tr></thead>
+                <thead>
+                    <tr>
+                        <th>Label</th>
+                        {% if is_global_view %}<th>Brand</th>{% endif %}
+                        <th>Key Prefix</th>
+                        <th>Scopes</th>
+                        <th>Status</th>
+                        <th>Created</th>
+                        <th>Last Used</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
                 <tbody>
                     {% for key in api_keys %}
                     <tr class="{{ key.status == 'revoked' ? 'op-key-row-revoked' : '' }}">
                         <td data-label="Label"><strong>{{ key.name }}</strong></td>
+                        {% if is_global_view %}
+                        <td data-label="Brand">
+                            <span class="op-badge op-badge-secondary">{{ key.brand_name|default('Platform') }}</span>
+                        </td>
+                        {% endif %}
                         <td data-label="Key Prefix">
                             <code class="op-code-pill">{{ key.key_prefix }}••••••••••••••••</code>
                         </td>
@@ -163,7 +206,7 @@
                         </td>
                     </tr>
                     {% else %}
-                    <tr><td colspan="7" class="op-empty">No API keys yet. Generate one above.</td></tr>
+                    <tr><td colspan="{{ is_global_view ? 8 : 7 }}" class="op-empty">No API keys yet. Generate one above.</td></tr>
                     {% endfor %}
                 </tbody>
             </table>
@@ -259,7 +302,7 @@
                         <div class="op-code-example-header"><span>PHP Verification Example</span></div>
                         <pre class="op-pre">$signature = $_SERVER['HTTP_X_OWNPAY_SIGNATURE']; // "sha256=abc123..."
 $body = file_get_contents('php://input');
-$expected = 'sha256=' . hash_hmac('sha256', $body, YOUR_WEBHOOK_SECRET);
+$expected = 'sha256=' . hash_hmac('sha256', $body, '{{ merchant_webhook_secret ? merchant_webhook_secret : "YOUR_WEBHOOK_SECRET" }}');
 if (!hash_equals($expected, $signature)) {
     http_response_code(401);
     exit;
@@ -275,9 +318,14 @@ if (!hash_equals($expected, $signature)) {
    TAB: Webhooks / IPN
 ══════════════════════════════════════════════════════════ #}
 <div class="op-tab-panel" id="tab-webhooks">
+    {% if is_global_view %}
+    <div class="op-alert op-alert-info op-mb-3">
+        <strong>Global Webhooks View:</strong> Viewing webhooks across all brands. You can register an endpoint for any brand using the modal, or switch to a specific brand to manage its webhooks directly.
+    </div>
+    {% endif %}
     <div class="op-card op-mb-4">
         <div class="op-card-header op-flex-row-space-between">
-            <h3>Webhook Endpoints</h3>
+            <h3>Webhook Endpoints{% if active_brand %} for {{ active_brand.name }}{% endif %}</h3>
             <div class="op-flex-gap-8">
                 <a href="/admin/webhooks/events" class="op-btn op-btn-sm op-btn-outline">View Delivery Log</a>
                 <button type="button" class="op-btn op-btn-sm op-btn-primary" data-open-modal="webhook-modal" data-wh="">+ Add Endpoint</button>
@@ -289,6 +337,7 @@ if (!hash_equals($expected, $signature)) {
                     <thead>
                         <tr>
                             <th>URL</th>
+                            {% if is_global_view %}<th>Brand</th>{% endif %}
                             <th>Status</th>
                             <th>Subscribed Events</th>
                             <th>Secret Key</th>
@@ -299,6 +348,11 @@ if (!hash_equals($expected, $signature)) {
                         {% for wh in webhooks %}
                         <tr>
                             <td data-label="URL"><code class="op-text-sm">{{ wh.url }}</code></td>
+                            {% if is_global_view %}
+                            <td data-label="Brand">
+                                <span class="op-badge op-badge-secondary">{{ wh.brand_name|default('Platform') }}</span>
+                            </td>
+                            {% endif %}
                             <td data-label="Status">
                                 <span class="op-badge op-badge-{{ wh.status == 'active' ? 'success' : 'muted' }}">
                                     {{ wh.status|capitalize }}
@@ -320,6 +374,7 @@ if (!hash_equals($expected, $signature)) {
                                 </div>
                             </td>
                             <td data-label="Actions" class="op-text-right">
+                                <button type="button" class="op-btn op-btn-xs op-btn-outline op-mr-1 test-single-webhook-btn" data-wh-id="{{ wh.id }}" data-wh-url="{{ wh.url }}">Test</button>
                                 <button type="button" class="op-btn op-btn-xs op-btn-outline op-mr-1"
                                         data-open-modal="webhook-modal"
                                         data-wh="{{ wh|json_encode(constant('JSON_HEX_TAG') b-or constant('JSON_HEX_AMP') b-or constant('JSON_HEX_APOS') b-or constant('JSON_HEX_QUOT'))|escape('html_attr') }}">
@@ -339,7 +394,7 @@ if (!hash_equals($expected, $signature)) {
                         </tr>
                         {% else %}
                         <tr>
-                            <td colspan="5" class="op-empty">No webhook endpoints configured. Click "+ Add Endpoint" to register one.</td>
+                            <td colspan="{{ is_global_view ? 6 : 5 }}" class="op-empty">No webhook endpoints configured. Click "+ Add Endpoint" to register one.</td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -384,6 +439,18 @@ if (!hash_equals($expected, $signature)) {
                 <button type="button" class="op-modal-close" data-close-modal="webhook-modal">&times;</button>
             </div>
             <div class="op-modal-body">
+                {% if is_global_view %}
+                <div class="op-form-group">
+                    <label>Target Brand *</label>
+                    <select name="merchant_id" id="webhook-merchant-field" class="op-input" required>
+                        <option value="">-- Select Brand --</option>
+                        {% for b in brands %}
+                        <option value="{{ b.id }}">{{ b.name }}</option>
+                        {% endfor %}
+                    </select>
+                    <small class="op-text-muted">Select which brand this webhook endpoint belongs to</small>
+                </div>
+                {% endif %}
                 <div class="op-form-group">
                     <label>Webhook URL *</label>
                     <input type="url" name="url" id="webhook-url-field" class="op-input" placeholder="https://yourapp.com/ownpay/webhook" required>
@@ -424,10 +491,10 @@ if (!hash_equals($expected, $signature)) {
 </div>
 
 {# ══════════════════════════════════════════════════════════
-   TAB: Rate Limits
+   TAB: Rate Limits (Platform Superadmin Only)
 ══════════════════════════════════════════════════════════ #}
+{% if is_superadmin and (active_brand_id is empty or active_brand_id == 0) %}
 <div class="op-tab-panel" id="tab-rate-limits">
-    {% if is_superadmin %}
     <form method="POST" action="/admin/developer/rate-limits/save" class="op-form">
         <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
         
@@ -500,52 +567,6 @@ if (!hash_equals($expected, $signature)) {
             </div>
         </div>
     </form>
-    {% else %}
-    <div class="op-card op-mb-4">
-        <div class="op-card-header"><h3>IP Whitelist Configurations (Read-only)</h3></div>
-        <div class="op-card-body">
-            <div class="op-alert op-alert-info op-mb-3">
-                <strong>Read-only Access:</strong> Only Super Administrators are permitted to configure rate limiting rules and whitelists.
-            </div>
-            <div class="op-form-group op-mb-0">
-                <label>Whitelisted IPs & Subnets</label>
-                <textarea class="op-input op-input-monospace" rows="4" readonly placeholder="No whitelisted IPs configured.">{{ rate_limit_whitelist_ips }}</textarea>
-            </div>
-        </div>
-    </div>
-
-    <div class="op-card op-mb-4">
-        <div class="op-card-header"><h3>Custom Dynamic Rules (Read-only)</h3></div>
-        <div class="op-card-body op-p-0">
-            <div class="op-table-responsive">
-                <table class="op-table">
-                    <thead>
-                        <tr>
-                            <th>URL Path Pattern</th>
-                            <th>HTTP Method</th>
-                            <th>Max Requests</th>
-                            <th>Window (seconds)</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for rule in rate_limit_rules %}
-                        <tr>
-                            <td data-label="Path"><code>{{ rule.path }}</code></td>
-                            <td data-label="Method"><span class="op-badge op-badge-info">{{ rule.method }}</span></td>
-                            <td data-label="Max Requests"><strong>{{ rule.limit }}</strong> hits</td>
-                            <td data-label="Window">every <strong>{{ rule.window }}</strong> seconds</td>
-                        </tr>
-                        {% else %}
-                        <tr>
-                            <td colspan="4" class="op-empty op-text-center op-text-muted op-py-8">No custom rate limit rules configured.</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-    {% endif %}
 
     <div class="op-card op-mb-4">
         <div class="op-card-header"><h3>Current Default Limits</h3></div>
@@ -593,15 +614,11 @@ if (!hash_equals($expected, $signature)) {
                                 {{ remaining > 0 ? remaining ~ 's' : 'Expired' }}
                             </td>
                             <td data-label="Actions" class="op-text-right">
-                                {% if is_superadmin %}
                                 <form method="POST" action="/admin/developer/rate-limits/reset" class="op-inline-form" data-confirm="Reset rate limit bucket for this key?">
                                     <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
                                     <input type="hidden" name="key" value="{{ limit.key_name }}">
                                     <button type="submit" class="op-btn op-btn-xs op-btn-danger">Reset</button>
                                 </form>
-                                {% else %}
-                                <span class="op-text-muted op-text-sm">No Permission</span>
-                                {% endif %}
                             </td>
                         </tr>
                         {% else %}
@@ -631,6 +648,7 @@ X-RateLimit-Remaining: 0
         </div>
     </div>
 </div>
+{% endif %}
 
 {% endblock %}
 {% block scripts %}

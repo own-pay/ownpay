@@ -17,6 +17,7 @@
     {% set statuses = [
         {key: '', label: 'All'},
         {key: 'completed', label: 'Completed'},
+        {key: 'awaiting_verification', label: 'Awaiting Verification'},
         {key: 'pending', label: 'Pending'},
         {key: 'failed', label: 'Failed'},
         {key: 'refunded', label: 'Refunded'},
@@ -25,7 +26,7 @@
     {% for s in statuses %}
     <a href="?status={{ s.key }}&q={{ filters.q|default('') }}&gateway={{ filters.gateway|default('') }}&date_from={{ filters.date_from|default('') }}&date_to={{ filters.date_to|default('') }}"
        class="op-chip {{ (filters.status|default('')) == s.key ? 'op-chip-active' : '' }}
-              {% if s.key == 'completed' %}op-chip-success{% elseif s.key == 'pending' %}op-chip-warning{% elseif s.key == 'failed' or s.key == 'canceled' %}op-chip-danger{% elseif s.key == 'refunded' %}op-chip-info{% endif %}">
+              {% if s.key == 'completed' %}op-chip-success{% elseif s.key == 'awaiting_verification' %}op-chip-info{% elseif s.key == 'pending' %}op-chip-warning{% elseif s.key == 'failed' or s.key == 'canceled' %}op-chip-danger{% elseif s.key == 'refunded' %}op-chip-info{% endif %}">
         {{ s.label }}
     </a>
     {% endfor %}
@@ -145,17 +146,22 @@
                                     <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
                                 </button>
                             </div>
-                            <small class="op-text-muted" style="display: block;">Gateway: {{ txn.gateway_trx_id|default('-') }}</small>
+                            <small class="op-text-muted" style="display: block;">Gateway: {% if txn.gateway_trx_id %}<code>{{ txn.gateway_trx_id }}</code>{% else %}-{% endif %}</small>
                             {% if txn.status == 'refunded' %}
                             <small class="op-text-muted" style="display: block;">Refunded: {{ txn.gateway_refund_id|default('-') }}</small>
                             {% endif %}
                         </td>
-                        <td data-label="Customer">{{ txn.customer_name|default('-') }}</td>
+                        <td data-label="Customer">
+                            {{ txn.customer_name|default('-') }}
+                            {% if txn.sender_account %}
+                            <small class="op-text-muted" style="display: block;">Sender: <code>{{ txn.sender_account }}</code></small>
+                            {% endif %}
+                        </td>
                         <td data-label="Amount"><strong>{{ txn.currency }} {{ txn.amount }}</strong></td>
                         <td data-label="Gateway"><span class="op-badge op-badge-outline">{{ txn.gateway_name }}</span></td>
                         <td data-label="Status">
-                            <span class="op-badge op-badge-{{ txn.status == 'completed' ? 'success' : (txn.status == 'pending' ? 'warning' : (txn.status == 'refunded' ? 'info' : 'danger')) }}">
-                                {{ txn.status|capitalize }}
+                            <span class="op-badge op-badge-{{ txn.status == 'completed' ? 'success' : (txn.status == 'pending' ? 'warning' : (txn.status == 'awaiting_verification' ? 'info' : (txn.status == 'refunded' ? 'info' : 'danger'))) }}">
+                                {{ txn.status|replace({'_': ' '})|capitalize }}
                             </span>
                         </td>
                         <td data-label="Date" class="op-text-muted op-text-sm">{{ txn.created_at|date("M d, Y H:i") }}</td>

@@ -8,6 +8,7 @@ use OwnPay\Http\Request;
 use OwnPay\Http\Response;
 use OwnPay\Repository\LoginAttemptRepository;
 use OwnPay\Service\Admin\AdminSession;
+use OwnPay\Service\Brand\BrandContext;
 use OwnPay\Service\System\AuditService;
 use OwnPay\Service\System\PaginationService;
 
@@ -46,8 +47,55 @@ final class LoginAttemptController
      */
     public function index(Request $req): Response
     {
-        if (!$this->session->isSuperadmin()) {
-            return Response::html('<h1>403 Forbidden</h1><p>Only the super-administrator can access this resource.</p>', 403);
+        $isSuperadmin = $this->session->isSuperadmin();
+        $mid = null;
+
+        if ($this->c->has(BrandContext::class)) {
+            $brand = $this->c->get(BrandContext::class);
+            if ($brand instanceof BrandContext) {
+                $brand->resolveFromRequest($req);
+                if (!$isSuperadmin || !$brand->isGlobalView()) {
+                    $mid = $brand->getActiveBrandId();
+                }
+            }
+        }
+        if (!$isSuperadmin && ($mid === null || $mid <= 0)) {
+            $mid = $this->session->merchantId();
+        }
+
+        $where = '1=1';
+        $params = [];
+
+        if ($mid !== null && $mid > 0) {
+            $db = $this->attemptsRepo->getDatabase();
+            $staffRows = $db->fetchAll(
+                "SELECT email FROM op_merchant_users WHERE merchant_id = :mid",
+                ['mid' => $mid]
+            );
+            $staffEmailMap = [];
+            foreach ($staffRows as $sRow) {
+                $e = $sRow['email'] ?? null;
+                if (is_string($e) && $e !== '') {
+                    $staffEmailMap[$e] = $e;
+                }
+            }
+            $userEmail = $this->session->userEmail();
+            if ($userEmail !== '') {
+                $staffEmailMap[$userEmail] = $userEmail;
+            }
+            $staffEmails = array_values($staffEmailMap);
+
+            if (empty($staffEmails)) {
+                $where = '1=0';
+            } else {
+                $placeholders = [];
+                foreach ($staffEmails as $idx => $email) {
+                    $key = 'semail_' . $idx;
+                    $placeholders[] = ':' . $key;
+                    $params[$key] = $email;
+                }
+                $where = 'email IN (' . implode(', ', $placeholders) . ')';
+            }
         }
 
         $pageVal = $req->query('page', '1');
@@ -55,7 +103,7 @@ final class LoginAttemptController
         $page = max(1, $page);
         $perPage = 50;
 
-        $paginated = $this->attemptsRepo->paginate($page, $perPage, '1=1', [], 'id DESC');
+        $paginated = $this->attemptsRepo->paginate($page, $perPage, $where, $params, 'id DESC');
         $pagination = PaginationService::calculate($page, $perPage, $paginated['total']);
 
         return $this->renderAdminPage('admin/settings/login-attempts.twig', [
@@ -71,8 +119,20 @@ final class LoginAttemptController
      */
     public function unlock(Request $req): Response
     {
-        if (!$this->session->isSuperadmin()) {
-            return Response::redirect('/admin/login-attempts');
+        $isSuperadmin = $this->session->isSuperadmin();
+        $mid = null;
+
+        if ($this->c->has(BrandContext::class)) {
+            $brand = $this->c->get(BrandContext::class);
+            if ($brand instanceof BrandContext) {
+                $brand->resolveFromRequest($req);
+                if (!$isSuperadmin || !$brand->isGlobalView()) {
+                    $mid = $brand->getActiveBrandId();
+                }
+            }
+        }
+        if (!$isSuperadmin && ($mid === null || $mid <= 0)) {
+            $mid = $this->session->merchantId();
         }
 
         $ipVal = $req->post('ip', '');
@@ -97,10 +157,60 @@ final class LoginAttemptController
         // so the unlock action itself is traceable.
         $target = '';
         if ($ip !== '') {
-            $db->delete("DELETE FROM op_login_attempts WHERE ip_address = :ip AND success = 0", ['ip' => $ip]);
+            if ($mid !== null && $mid > 0) {
+                // Non-superadmin / brand scoped: fetch brand staff emails
+                $staffRows = $db->fetchAll(
+                    "SELECT email FROM op_merchant_users WHERE merchant_id = :mid",
+                    ['mid' => $mid]
+                );
+                $staffEmailMap = [];
+                foreach ($staffRows as $sRow) {
+                    $e = $sRow['email'] ?? null;
+                    if (is_string($e) && $e !== '') {
+                        $staffEmailMap[$e] = $e;
+                    }
+                }
+                $userEmail = $this->session->userEmail();
+                if ($userEmail !== '') {
+                    $staffEmailMap[$userEmail] = $userEmail;
+                }
+                $staffEmails = array_values($staffEmailMap);
+
+                if (empty($staffEmails)) {
+                    $this->session->flashError("No staff accounts found for this brand.");
+                    return Response::redirect('/admin/login-attempts');
+                }
+
+                $placeholders = [];
+                $params = ['ip' => $ip];
+                foreach ($staffEmails as $idx => $sEmail) {
+                    $key = 'e_' . $idx;
+                    $placeholders[] = ':' . $key;
+                    $params[$key] = $sEmail;
+                }
+                $db->delete(
+                    "DELETE FROM op_login_attempts WHERE ip_address = :ip AND email IN (" . implode(', ', $placeholders) . ") AND success = 0",
+                    $params
+                );
+                $this->session->flashSuccess("Failed login attempts from IP {$ip} for your brand staff have been cleared/unlocked.");
+            } else {
+                $db->delete("DELETE FROM op_login_attempts WHERE ip_address = :ip AND success = 0", ['ip' => $ip]);
+                $this->session->flashSuccess("Failed login attempts from IP {$ip} have been cleared/unlocked.");
+            }
             $target = $ip;
-            $this->session->flashSuccess("Failed login attempts from IP {$ip} have been cleared/unlocked.");
         } elseif ($email !== '') {
+            if ($mid !== null && $mid > 0) {
+                // Verify this email belongs to the merchant's staff
+                $existsVal = $db->fetchColumn(
+                    "SELECT COUNT(*) FROM op_merchant_users WHERE email = :email AND merchant_id = :mid",
+                    ['email' => $email, 'mid' => $mid]
+                );
+                $exists = is_numeric($existsVal) ? (int)$existsVal : 0;
+                if ($exists === 0 && $email !== $this->session->userEmail()) {
+                    $this->session->flashError("You can only unlock staff accounts belonging to your brand.");
+                    return Response::redirect('/admin/login-attempts');
+                }
+            }
             $db->delete("DELETE FROM op_login_attempts WHERE email = :email AND success = 0", ['email' => $email]);
             $target = $email;
             $this->session->flashSuccess("Failed login attempts for user {$email} have been cleared/unlocked.");

@@ -23,6 +23,11 @@
     <div class="op-card op-mb-4">
         <div class="op-card-header"><h3>Your payment account</h3></div>
         <div class="op-card-body">
+            <div class="op-form-group op-mb-3">
+                <label for="payment_number">Payment Number (Phone / Account Number) *</label>
+                <input type="text" id="payment_number" name="payment_number" value="{{ account.payment_number ?? template.payment_number ?? '' }}" class="op-input" placeholder="e.g. 01XXXXXXXXX" required>
+                <small class="op-text-muted">The exact phone or account number customers should send money to. Displayed directly under "TO THIS NUMBER" with a copy button.</small>
+            </div>
             <div class="op-form-group">
                 <label for="instructions">Payment Instructions / Account *</label>
                 <textarea id="instructions" name="instructions" rows="4" class="op-input" required placeholder="e.g. Send money to 01XXXXXXXXX (Personal)">{{ instructions_text }}</textarea>

@@ -10,9 +10,7 @@
 
 <div class="op-tabs op-mb-4" style="display: flex; gap: 8px; margin-bottom: 20px;">
     <a href="/admin/activities" class="op-btn {% if active_subpage == 'activities' %}op-btn-primary{% else %}op-btn-outline{% endif %}">📋 Staff Activities</a>
-    {% if is_superadmin %}
     <a href="/admin/login-attempts" class="op-btn {% if active_subpage == 'login_attempts' %}op-btn-primary{% else %}op-btn-outline{% endif %}">🔒 Login Attempts</a>
-    {% endif %}
 </div>
 
 <div class="op-card">

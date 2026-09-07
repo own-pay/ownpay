@@ -77,7 +77,16 @@ final class MerchantRepository extends BaseRepository
     {
         $data['uuid'] = Uuid::uuid4()->toString();
         $data['webhook_secret'] = bin2hex(random_bytes(32));
-        return $this->create($data);
+        $id = $this->create($data);
+
+        // Auto-seed default conflict-free roles (Owner, Manager, Staff, Finance)
+        try {
+            \OwnPay\Service\Brand\BrandRoleSeeder::seed($this->db, (int) $id);
+        } catch (\Throwable) {
+            // Non-blocking
+        }
+
+        return $id;
     }
 
     /**

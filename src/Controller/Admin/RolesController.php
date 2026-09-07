@@ -25,6 +25,11 @@ final class RolesController
     use AdminPageTrait;
 
     /**
+     * Platform-only permissions that must NOT be assignable to brand-scoped roles.
+     */
+    public const PLATFORM_PERMISSIONS = \OwnPay\Service\Brand\BrandRoleSeeder::PLATFORM_PERMISSIONS;
+
+    /**
      * @var Container The dependency injection container.
      */
     private Container $c;
@@ -72,6 +77,11 @@ final class RolesController
             }
         }
 
+        // For brand scopes (mid > 0), ensure default standard roles exist
+        if ($mid > 0) {
+            self::seedDefaultRolesForBrand($this->roles->getDatabase(), $mid);
+        }
+
         $rolesData = $this->roles->forTenant($mid)->paginateScoped(1, 100);
         $roles = isset($rolesData['items']) && is_array($rolesData['items']) ? $rolesData['items'] : [];
 
@@ -86,8 +96,8 @@ final class RolesController
         }
         unset($r);
 
-        // Load all available permissions (grouped)
-        $allPerms = $this->loadAllPermissions();
+        // Load available permissions (excluding platform-only permissions for brand scopes)
+        $allPerms = $this->loadAllPermissions($mid);
 
         return $this->renderAdminPage('admin/roles/index.twig', [
             'roles'       => $roles,
@@ -219,6 +229,24 @@ final class RolesController
             }
         }
 
+        // Ensure platform permissions cannot be assigned to brand roles
+        if ($mid > 0 && !empty($permIds)) {
+            $db = $this->roles->getDatabase();
+            $platformPlaceholders = implode(',', array_fill(0, count(self::PLATFORM_PERMISSIONS), '?'));
+            $platformRows = $db->fetchAll(
+                "SELECT id FROM op_permissions WHERE slug IN ({$platformPlaceholders})",
+                self::PLATFORM_PERMISSIONS
+            );
+            $platformPermIds = [];
+            foreach ($platformRows as $r) {
+                $rId = $r['id'] ?? null;
+                if (is_numeric($rId)) {
+                    $platformPermIds[] = (int)$rId;
+                }
+            }
+            $permIds = array_values(array_diff($permIds, $platformPermIds));
+        }
+
         $this->roles->syncPermissions($id, $permIds);
 
         $this->session->flashSuccess("Role '{$name}' updated");
@@ -287,19 +315,38 @@ final class RolesController
     }
 
     /**
-     * Loads all system permissions, grouped by category/group name.
+     * Loads system permissions, optionally filtered to exclude platform-only permissions for brand scopes.
      *
+     * @param int|null $merchantId The merchant brand ID. If > 0, platform-only permissions are excluded.
      * @return array<string, array<int, array<string, mixed>>> Grouped permissions mapping.
      */
-    private function loadAllPermissions(): array
+    private function loadAllPermissions(?int $merchantId = null): array
     {
         $db   = $this->roles->getDatabase();
         $rows = $db->fetchAll("SELECT * FROM op_permissions ORDER BY group_name, slug");
         $grouped = [];
         foreach ($rows as $r) {
+            $slug = is_string($r['slug'] ?? null) ? $r['slug'] : '';
+            // For brand scopes (mid > 0), hide platform-exclusive permissions
+            if ($merchantId !== null && $merchantId > 0 && in_array($slug, self::PLATFORM_PERMISSIONS, true)) {
+                continue;
+            }
             $groupName = is_string($r['group_name'] ?? null) ? $r['group_name'] : 'general';
             $grouped[$groupName][] = $r;
         }
         return $grouped;
     }
+
+    /**
+     * Seeds the standard, conflict-free role templates for a specific brand.
+     *
+     * @param \OwnPay\Core\Database $db
+     * @param int $merchantId
+     * @return void
+     */
+    public static function seedDefaultRolesForBrand(\OwnPay\Core\Database $db, int $merchantId): void
+    {
+        \OwnPay\Service\Brand\BrandRoleSeeder::seed($db, $merchantId);
+    }
 }
+

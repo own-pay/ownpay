@@ -73,15 +73,17 @@ final class ManualGatewayRepository extends BaseRepository
     }
 
     /**
-     * Resolves the manual gateways a brand's customer can pay through at checkout, merging the
-     * platform-owned templates (All-Brands defaults) with the brand's own account overrides.
+     * Resolves the manual gateways a brand's customer can pay through at checkout.
      *
-     * Money-routing rule (Phase 2c, model A): for each gateway slug the BRAND's own active row wins -
-     * its instructions/QR/account are the account the customer's funds go to. When the brand has not
-     * configured that slug, the platform template is the fallback (its own default account). Slugs
-     * that exist only as brand rows (legacy/brand-only gateways) are preserved. Only 'active' rows on
-     * either side are offered. This is the single choke point that decides which account funds reach,
-     * so it deliberately bypasses TenantScope to read both owners in one query.
+     * Opt-in model:
+     * When paying under a specific brand ($brandId > 0 and $brandId !== $platformId),
+     * only manual gateways that the brand has explicitly configured and activated
+     * (merchant_id = $brandId AND status = 'active') are offered. Platform templates
+     * are never exposed to brand customers unless the brand has explicitly configured and
+     * enabled its own account for that gateway.
+     *
+     * When paying directly under the platform owner ($brandId === $platformId),
+     * the platform's own active manual gateways are returned.
      *
      * @param int $brandId    The paying brand/merchant id (the transaction's merchant_id).
      * @param int $platformId The reserved platform-owner merchant id (BrandContext::getPlatformId()).
@@ -89,31 +91,14 @@ final class ManualGatewayRepository extends BaseRepository
      */
     public function listActiveForCheckout(int $brandId, int $platformId): array
     {
-        $rows = $this->db->fetchAll(
+        $targetId = ($brandId > 0 && $brandId !== $platformId) ? $brandId : $platformId;
+
+        return $this->db->fetchAll(
             "SELECT * FROM {$this->table}
-             WHERE status = 'active' AND merchant_id IN (:brand, :platform)
+             WHERE status = 'active' AND merchant_id = :mid
              ORDER BY sort_order ASC, id ASC",
-            ['brand' => $brandId, 'platform' => $platformId]
+            ['mid' => $targetId]
         );
-
-        // Collapse to one effective row per slug, preferring the brand's own account over the
-        // platform template. Insertion order (sort_order ASC) is preserved by keeping the slug's
-        // first position; the brand row overwrites the value in place when it wins.
-        $bySlug = [];
-        foreach ($rows as $row) {
-            $slugVal = $row['slug'] ?? '';
-            $slug = is_string($slugVal) ? $slugVal : '';
-            if ($slug === '') {
-                continue;
-            }
-            $ownerVal = $row['merchant_id'] ?? 0;
-            $owner = (is_int($ownerVal) || is_string($ownerVal)) ? (int) $ownerVal : 0;
-            if (!isset($bySlug[$slug]) || $owner === $brandId) {
-                $bySlug[$slug] = $row;
-            }
-        }
-
-        return array_values($bySlug);
     }
 }
 

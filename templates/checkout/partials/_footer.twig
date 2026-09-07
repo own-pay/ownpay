@@ -4,11 +4,11 @@
 <div class="ck-footer ck-fi ck-footer-container">
     <div class="ck-footer-row">
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        <span>{{ brand.footer_text ?? 'Secured by OwnPay · 256-bit encryption' }}</span>
+        <span>{{ (brand.footer_text|default('')) != '' ? brand.footer_text : ('Secured by ' ~ (brand.name|default('OwnPay')) ~ ' · 256-bit encryption') }}</span>
     </div>
     {% if brand.show_powered_by|default('1') != '0' %}
         <div class="ck-footer-attribution ck-footer-attribution-style">
-            {{ ownpay_footer('', brand.powered_by_text ?? '', brand.powered_by_url ?? '')|raw }}
+            {{ ownpay_footer('', brand.powered_by_text|default(''), brand.powered_by_url|default(''))|raw }}
         </div>
     {% endif %}
 </div>

@@ -186,6 +186,16 @@ final class BrandController
             $paymentLinkService->ensureDefault($merchantId, $name, $slug, $currency);
         }
 
+        // Auto-seed conflict-free default roles for the new brand
+        try {
+            $db = $this->c->get(\OwnPay\Core\Database::class);
+            if ($db instanceof \OwnPay\Core\Database) {
+                RolesController::seedDefaultRolesForBrand($db, $merchantId);
+            }
+        } catch (\Throwable) {
+            // Non-blocking
+        }
+
         $this->session->flashSuccess('Brand created successfully');
         return Response::redirect('/admin/brands');
     }
@@ -200,6 +210,13 @@ final class BrandController
     public function show(Request $req): Response
     {
         $id = (int) $req->param('id');
+        $isSuperAdmin = $this->session->isSuperadmin();
+        $authMerchantId = $this->session->merchantId() ?? 0;
+        if (!$isSuperAdmin && $id !== $authMerchantId) {
+            $this->session->flashError('Permission denied to access this brand');
+            return Response::redirect('/admin');
+        }
+
         $brand = $this->merchants->findWithDomain($id);
 
         if (!$brand) {
@@ -236,6 +253,13 @@ final class BrandController
     public function update(Request $req): Response
     {
         $id   = (int) $req->param('id');
+        $isSuperAdmin = $this->session->isSuperadmin();
+        $authMerchantId = $this->session->merchantId() ?? 0;
+        if (!$isSuperAdmin && $id !== $authMerchantId) {
+            $this->session->flashError('Permission denied to access this brand');
+            return Response::redirect('/admin');
+        }
+
         $postData = $req->post();
         $data = is_array($postData) ? $postData : [];
         
@@ -318,7 +342,7 @@ final class BrandController
     public function switchBrand(Request $req): Response
     {
         $id = $req->post('brand_id');
-        $isSuperAdmin = !empty($_SESSION['is_superadmin']);
+        $isSuperAdmin = $this->session->isSuperadmin();
         $authMerchantId = $_SESSION['auth_merchant_id'] ?? 0;
         $homeMerchantId = is_scalar($authMerchantId) && is_numeric($authMerchantId) ? (int) $authMerchantId : 0;
 

@@ -30,7 +30,7 @@
                     <p class="ck-popup-label ck-popup-label-center">{{ lang.scan_to_pay ?? 'Or scan to pay' }}</p>
                     <img id="mpQr" class="ck-popup-qr" alt="Payment QR code">
                 </div>
-                <p class="ck-popup-footer" id="mpFooter"></p>
+                <p class="ck-popup-footer" id="mpFooter">{{ brand.name ? ('Secured by ' ~ brand.name) : 'Secured by OwnPay' }}</p>
                 <button type="button" data-action="go-mp-step" data-step="2" class="ck-popup-next-btn">{{ lang.i_have_sent ?? "I've sent the money" }}</button>
             </div>
 

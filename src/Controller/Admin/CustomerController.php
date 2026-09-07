@@ -205,13 +205,18 @@ final class CustomerController
             throw new \RuntimeException('BrandContext service unavailable');
         }
         $brand->resolveFromRequest($req); 
+        $isGlobal = $brand->isGlobalView();
         $mid = $brand->getActiveBrandId();
-        if ($mid === null) {
+        if ($mid === null && !$isGlobal) {
             throw new \RuntimeException('No active brand found.');
         }
         
-        $scopedRepo = $this->customerRepo->forTenant($mid);
-        $customer = $scopedRepo->findScoped($id);
+        if ($isGlobal || $mid === 0) {
+            $customer = $this->customerRepo->find($id);
+        } else {
+            $scopedRepo = $this->customerRepo->forTenant($mid);
+            $customer = $scopedRepo->findScoped($id);
+        }
         
         if (!$customer) { 
             $this->session->flashError('Customer not found'); 
@@ -233,7 +238,9 @@ final class CustomerController
             $customer['phone'] = '-';
         }
 
-        $txns = $this->customerRepo->getRecentTransactions($id, $mid, 50);
+        $custMid = $customer['merchant_id'] ?? null;
+        $effectiveMid = is_scalar($custMid) ? (int)$custMid : ($mid ?? 0);
+        $txns = $this->customerRepo->getRecentTransactions($id, $effectiveMid, 50);
 
         return $this->renderAdminPage('admin/customers/show.twig', [
             'customer'       => $customer,
@@ -371,18 +378,26 @@ final class CustomerController
             throw new \RuntimeException('BrandContext service unavailable');
         }
         $brand->resolveFromRequest($req);
+        $isGlobal = $brand->isGlobalView();
         $mid = $brand->getActiveBrandId();
-        if ($mid === null) {
+        if ($mid === null && !$isGlobal) {
             throw new \RuntimeException('No active brand found.');
         }
 
-        $scopedRepo = $this->customerRepo->forTenant($mid);
-        $customer = $scopedRepo->findScoped($id);
+        if ($isGlobal || $mid === 0) {
+            $customer = $this->customerRepo->find($id);
+        } else {
+            $scopedRepo = $this->customerRepo->forTenant($mid);
+            $customer = $scopedRepo->findScoped($id);
+        }
 
         if (!$customer) {
             $this->session->flashError('Customer not found or access denied');
             return Response::redirect('/admin/customers');
         }
+
+        $custMid = $customer['merchant_id'] ?? null;
+        $effectiveMid = is_scalar($custMid) ? (int)$custMid : ($mid ?? 0);
 
         // SECURITY (CUS-1): perform a SOFT delete via CustomerPiiService so
         // that PII is wiped but the row is preserved with status='deleted'.
@@ -395,7 +410,7 @@ final class CustomerController
         if (!$pii instanceof \OwnPay\Service\Customer\CustomerPiiService) {
             throw new \RuntimeException('CustomerPiiService unavailable');
         }
-        $pii->delete($mid, $id);
+        $pii->delete($effectiveMid, $id);
 
         // Audit-log the soft-delete so the action is attributable.
         $audit = $this->c->get(\OwnPay\Service\System\AuditService::class);

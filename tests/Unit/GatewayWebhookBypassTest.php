@@ -68,8 +68,18 @@ final class GatewayWebhookBypassTest extends TestCase
 
     public function testEasypaisaLiveModeRequiresConfiguredKey(): void
     {
-        $gw = new EasypaisaGateway();
-        $this->assertFalse($gw->verifyWebhook('{"secureHash":"x"}', [], ['mode' => 'live']));
-        $this->assertTrue($gw->verifyWebhook('{"secureHash":"x"}', [], ['mode' => 'sandbox']));
+        $oldEnv = $_ENV['APP_ENV'] ?? null;
+        $_ENV['APP_ENV'] = 'testing';
+        try {
+            $gw = new EasypaisaGateway();
+            $this->assertFalse($gw->verifyWebhook('{"secureHash":"x"}', [], ['mode' => 'live']));
+            $this->assertTrue($gw->verifyWebhook('{"secureHash":"x"}', [], ['mode' => 'sandbox']));
+        } finally {
+            if ($oldEnv !== null) {
+                $_ENV['APP_ENV'] = $oldEnv;
+            } else {
+                unset($_ENV['APP_ENV']);
+            }
+        }
     }
 }

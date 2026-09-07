@@ -353,14 +353,23 @@ final class PaymentIntentCheckoutController
                 $instructions = [$instructionsObj];
             }
 
-            $paymentNumber = '';
-            foreach ($inputFields as $field) {
-                if (is_array($field)) {
-                    if (($field['type'] ?? '') === 'payment_number' || ($field['name'] ?? '') === 'payment_number') {
-                        $paymentNumberVal = $field['value'] ?? $field['default'] ?? '';
-                        $paymentNumber = is_string($paymentNumberVal) ? $paymentNumberVal : '';
-                        break;
+            $paymentNumberVal = $gw['payment_number'] ?? '';
+            $paymentNumber = is_string($paymentNumberVal) ? trim($paymentNumberVal) : '';
+            if ($paymentNumber === '') {
+                foreach ($inputFields as $field) {
+                    if (is_array($field)) {
+                        if (($field['type'] ?? '') === 'payment_number' || ($field['name'] ?? '') === 'payment_number') {
+                            $fieldVal = $field['value'] ?? $field['default'] ?? '';
+                            $paymentNumber = is_string($fieldVal) ? trim($fieldVal) : '';
+                            break;
+                        }
                     }
+                }
+            }
+            if ($paymentNumber === '') {
+                $instrRaw = is_string($instructionsRaw) ? $instructionsRaw : '';
+                if (preg_match('/(?:01[3-9]\d{8}|01[3-9]\d{2}-\d{6})/i', $instrRaw, $matches)) {
+                    $paymentNumber = $matches[0];
                 }
             }
 
@@ -441,6 +450,9 @@ final class PaymentIntentCheckoutController
 
         $intentSymbol = $intent['currency_symbol'];
 
+        $brandNameVal = $brand['name'] ?? null;
+        $brandName = (is_string($brandNameVal) && $brandNameVal !== '') ? $brandNameVal : 'OwnPay';
+
         $jsConfig = [
             'txnRef'                => $intentToken,
             'checkoutBasePath'      => '/checkout/intent/' . $token,
@@ -451,6 +463,7 @@ final class PaymentIntentCheckoutController
             'timeoutSeconds'        => $timerSeconds,
             'timeoutRemaining'      => $remaining,
             'gatewayMeta'           => $gatewayMeta,
+            'brandName'             => $brandName,
         ];
 
         // Extract and decode payment invoice line items from intent metadata.
@@ -743,6 +756,17 @@ final class PaymentIntentCheckoutController
             $this->txnRepo->setGatewayAndStatus($txnId, $gateway, 'awaiting_verification', $mid);
             $details = $req->post('payment_details', []);
             if (!empty($details) && is_array($details)) {
+                $updateFields = [];
+                if (!empty($details['transaction_id']) && is_string($details['transaction_id'])) {
+                    $updateFields['gateway_trx_id'] = trim($details['transaction_id']);
+                }
+                if (!empty($details['sender_number']) && is_string($details['sender_number'])) {
+                    $updateFields['sender_account'] = trim($details['sender_number']);
+                }
+                if (!empty($updateFields)) {
+                    $this->txnRepo->forTenant($mid)->updateScoped($txnId, $updateFields);
+                }
+
                 $metaRaw = $intent['metadata'] ?? '{}';
                 $metaStr = is_string($metaRaw) ? $metaRaw : '{}';
                 $metaObj = json_decode($metaStr, true);

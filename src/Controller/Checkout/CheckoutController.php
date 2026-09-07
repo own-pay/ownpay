@@ -317,7 +317,24 @@ final class CheckoutController
             }
 
             $paymentNumberVal = $gw['payment_number'] ?? '';
-            $paymentNumber = is_string($paymentNumberVal) ? $paymentNumberVal : '';
+            $paymentNumber = is_string($paymentNumberVal) ? trim($paymentNumberVal) : '';
+            if ($paymentNumber === '') {
+                foreach ($inputFields as $field) {
+                    if (is_array($field) && (($field['type'] ?? '') === 'payment_number' || ($field['name'] ?? '') === 'payment_number')) {
+                        $fieldVal = $field['value'] ?? $field['default'] ?? '';
+                        if (is_string($fieldVal) && trim($fieldVal) !== '') {
+                            $paymentNumber = trim($fieldVal);
+                            break;
+                        }
+                    }
+                }
+            }
+            if ($paymentNumber === '') {
+                $instrRaw = is_string($instructionsRaw) ? $instructionsRaw : '';
+                if (preg_match('/(?:01[3-9]\d{8}|01[3-9]\d{2}-\d{6})/i', $instrRaw, $matches)) {
+                    $paymentNumber = $matches[0];
+                }
+            }
 
             $logoPathVal = $gw['logo_path'] ?? null;
             $qrCodePathVal = $gw['qr_code_path'] ?? null;
@@ -705,6 +722,16 @@ final class CheckoutController
 
             $details = $req->post('payment_details', []);
             if (is_array($details) && !empty($details)) {
+                $updateFields = [];
+                if (!empty($details['transaction_id']) && is_string($details['transaction_id'])) {
+                    $updateFields['gateway_trx_id'] = trim($details['transaction_id']);
+                }
+                if (!empty($details['sender_number']) && is_string($details['sender_number'])) {
+                    $updateFields['sender_account'] = trim($details['sender_number']);
+                }
+                if (!empty($updateFields)) {
+                    $this->txnRepo->forTenant($mid)->updateScoped($txnId, $updateFields);
+                }
                 $this->txnRepo->updateMetadata($txnId, [
                     'payment_details' => $details,
                     'submitted_at'    => DateHelper::now(),

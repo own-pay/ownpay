@@ -42,13 +42,19 @@ final class WebhookController
         }
         $brand->resolveFromRequest($req);
         $mid = $brand->getActiveBrandId();
-        if ($mid === null) {
-            throw new \RuntimeException('No active brand found.');
+
+        // In global view, allow superadmin to assign target brand
+        if (($mid === null || $mid === 0) && $this->session->isSuperadmin()) {
+            $postMid = $req->post('merchant_id');
+            if (is_numeric($postMid) && (int)$postMid > 0) {
+                $mid = (int)$postMid;
+            }
         }
 
         if ($guard = $this->requireActiveBrand($mid, '/admin/developer#webhooks')) {
             return $guard;
         }
+        assert(is_int($mid));
 
         $idVal = $req->post('id', '0');
         $id = is_numeric($idVal) ? (int)$idVal : 0;
@@ -82,6 +88,11 @@ final class WebhookController
         $scopedRepo = $this->webhookRepo->forTenant($mid);
 
         if ($id > 0) {
+            $existing = $scopedRepo->findScoped($id);
+            if (!$existing) {
+                $this->session->flashError('Webhook endpoint not found.');
+                return Response::redirect('/admin/developer#webhooks');
+            }
             $scopedRepo->updateScoped($id, $data);
             $this->session->flashSuccess('Webhook endpoint updated successfully.');
         } else {
@@ -103,17 +114,31 @@ final class WebhookController
         }
         $brand->resolveFromRequest($req);
         $mid = $brand->getActiveBrandId();
-        if ($mid === null) {
-            throw new \RuntimeException('No active brand found.');
-        }
 
         $idVal = $req->param('id');
         $id = is_numeric($idVal) ? (int)$idVal : 0;
 
-        $scopedRepo = $this->webhookRepo->forTenant($mid);
-        $scopedRepo->deleteScoped($id);
+        // In global view for superadmin, resolve merchant from the webhook record
+        if (($mid === null || $mid <= 0) && $this->session->isSuperadmin()) {
+            $rawWh = $this->webhookRepo->forAllTenants()->findScoped($id);
+            if ($rawWh && isset($rawWh['merchant_id']) && is_numeric($rawWh['merchant_id'])) {
+                $mid = (int)$rawWh['merchant_id'];
+            }
+        }
 
-        $this->session->flashSuccess('Webhook endpoint deleted successfully.');
+        if ($guard = $this->requireActiveBrand($mid, '/admin/developer#webhooks')) {
+            return $guard;
+        }
+        assert(is_int($mid));
+
+        $scopedRepo = $this->webhookRepo->forTenant($mid);
+        $count = $scopedRepo->deleteScoped($id);
+        if ($count === 0) {
+            $this->session->flashError('Webhook endpoint not found.');
+        } else {
+            $this->session->flashSuccess('Webhook endpoint deleted successfully.');
+        }
+
         return Response::redirect('/admin/developer#webhooks');
     }
 
@@ -128,12 +153,22 @@ final class WebhookController
         }
         $brand->resolveFromRequest($req);
         $mid = $brand->getActiveBrandId();
-        if ($mid === null) {
-            throw new \RuntimeException('No active brand found.');
-        }
 
         $idVal = $req->param('id');
         $id = is_numeric($idVal) ? (int)$idVal : 0;
+
+        // In global view for superadmin, resolve merchant from the webhook record
+        if (($mid === null || $mid <= 0) && $this->session->isSuperadmin()) {
+            $rawWh = $this->webhookRepo->forAllTenants()->findScoped($id);
+            if ($rawWh && isset($rawWh['merchant_id']) && is_numeric($rawWh['merchant_id'])) {
+                $mid = (int)$rawWh['merchant_id'];
+            }
+        }
+
+        if ($guard = $this->requireActiveBrand($mid, '/admin/developer#webhooks')) {
+            return $guard;
+        }
+        assert(is_int($mid));
 
         $scopedRepo = $this->webhookRepo->forTenant($mid);
         $webhook = $scopedRepo->findScoped($id);
@@ -143,6 +178,8 @@ final class WebhookController
             $newStatus = $currentStatus === 'active' ? 'inactive' : 'active';
             $scopedRepo->updateScoped($id, ['status' => $newStatus]);
             $this->session->flashSuccess("Webhook endpoint set to {$newStatus}.");
+        } else {
+            $this->session->flashError('Webhook endpoint not found.');
         }
 
         return Response::redirect('/admin/developer#webhooks');

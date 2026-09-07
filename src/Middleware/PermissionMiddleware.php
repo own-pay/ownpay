@@ -120,6 +120,15 @@ final class PermissionMiddleware
                 if ($path !== '/admin/brands/switch') {
                     foreach ($globalOnlyPrefixes as $prefix) {
                         if ($path === $prefix || str_starts_with($path, $prefix . '/')) {
+                            // Allow a brand staff/owner to view and edit their OWN brand profile in brand view
+                            if ($prefix === '/admin/brands' && (
+                                $path === "/admin/brands/{$activeBrandId}" ||
+                                $path === "/admin/brands/{$activeBrandId}/edit" ||
+                                $path === "/admin/brands/{$activeBrandId}/update"
+                            )) {
+                                continue;
+                            }
+
                             $session = $this->container->get(\OwnPay\Service\Admin\AdminSession::class);
                             if ($session instanceof \OwnPay\Service\Admin\AdminSession) {
                                 $session->flashError('This page is only accessible in Global View.');
@@ -250,10 +259,11 @@ final class PermissionMiddleware
         $map = [
             // Dashboard routes mapped to permission map
             '/admin/transactions'         => 'transactions.view',
+            '/admin/payment-intents'      => 'transactions.view',
             '/admin/refunds'              => 'transactions.view',
             '/admin/invoices'             => 'invoices.view',
             '/admin/payment-links'        => 'payment_links.view',
-            '/admin/disputes'             => 'disputes.view',
+            '/admin/disputes'             => 'transactions.view',
             '/admin/customers'            => 'customers.view',
             '/admin/gateways'             => 'gateways.view',
             '/admin/staff'                => 'staff.view',
@@ -266,7 +276,7 @@ final class PermissionMiddleware
             '/admin/devices'              => 'devices.view',
             '/admin/plugins'              => 'plugins.view',
             '/admin/themes'               => 'plugins.view',
-            '/admin/appearance'           => 'plugins.view',
+            '/admin/appearance'           => 'settings.view',
             '/admin/system-update'        => 'system.update',
             '/admin/activities'           => 'system.audit',
             '/admin/audit-integrity'      => 'system.audit',
@@ -277,6 +287,8 @@ final class PermissionMiddleware
             '/admin/roles'                => 'staff.view',
             '/admin/developer'            => 'api_keys.view',
             '/admin/gateway-webhooks'     => 'api_keys.view',
+            '/admin/webhooks'             => 'webhooks.view',
+            '/admin/notifications'        => 'admin.access',
             '/admin/ledger'               => 'system.reports',
             '/admin/currencies'           => 'settings.view',
             '/admin/my-account'           => 'admin.access',
@@ -296,6 +308,18 @@ final class PermissionMiddleware
         // RFC 9110 §9.2.1 defines GET/HEAD/OPTIONS as "safe" (no state
         // change); every other method is treated as state-changing here.
         $stateChanging = !in_array($method, ['GET', 'HEAD', 'OPTIONS'], true);
+
+        // A brand owner/staff viewing or updating their own brand profile uses settings.view / settings.manage
+        $activeBrandId = null;
+        if ($this->container->has(\OwnPay\Service\Brand\BrandContext::class)) {
+            $brandCtx = $this->container->get(\OwnPay\Service\Brand\BrandContext::class);
+            $activeBrandId = $brandCtx instanceof \OwnPay\Service\Brand\BrandContext ? $brandCtx->getActiveBrandId() : null;
+        }
+        if ($activeBrandId !== null && $activeBrandId > 0) {
+            if ($path === "/admin/brands/{$activeBrandId}" || $path === "/admin/brands/{$activeBrandId}/edit" || $path === "/admin/brands/{$activeBrandId}/update") {
+                return $stateChanging ? 'settings.manage' : 'settings.view';
+            }
+        }
 
         // Check exact match first
         if (isset($map[$path])) {

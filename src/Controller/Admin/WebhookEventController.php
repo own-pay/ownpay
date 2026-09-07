@@ -67,20 +67,13 @@ final class WebhookEventController
      */
     public function index(Request $req): Response
     {
-        $isSuperadmin = $this->session->isSuperadmin();
-        $mid = null;
-
-        if (!$isSuperadmin) {
-            $brand = $this->c->get(BrandContext::class);
-            if (!$brand instanceof BrandContext) {
-                throw new \RuntimeException('BrandContext service unavailable');
-            }
-            $brand->resolveFromRequest($req);
-            $mid = $brand->getActiveBrandId();
-            if ($mid === null) {
-                throw new \RuntimeException('No active brand found.');
-            }
+        $brand = $this->c->get(BrandContext::class);
+        if (!$brand instanceof BrandContext) {
+            throw new \RuntimeException('BrandContext service unavailable');
         }
+        $brand->resolveFromRequest($req);
+        $isGlobal = $this->isGlobalBrandView();
+        $mid = $isGlobal ? null : $brand->getActiveBrandId();
 
         $pageVal = $req->query('page', '1');
         $page = max(1, is_int($pageVal) || is_string($pageVal) ? (int)$pageVal : 1);
@@ -120,20 +113,13 @@ final class WebhookEventController
             return Response::redirect('/admin/webhooks/events');
         }
 
-        $isSuperadmin = $this->session->isSuperadmin();
-        $mid = null;
-
-        if (!$isSuperadmin) {
-            $brand = $this->c->get(BrandContext::class);
-            if (!$brand instanceof BrandContext) {
-                throw new \RuntimeException('BrandContext service unavailable');
-            }
-            $brand->resolveFromRequest($req);
-            $mid = $brand->getActiveBrandId();
-            if ($mid === null) {
-                throw new \RuntimeException('No active brand found.');
-            }
+        $brand = $this->c->get(BrandContext::class);
+        if (!$brand instanceof BrandContext) {
+            throw new \RuntimeException('BrandContext service unavailable');
         }
+        $brand->resolveFromRequest($req);
+        $isGlobal = $this->isGlobalBrandView();
+        $mid = $isGlobal ? null : $brand->getActiveBrandId();
 
         // Verify brand scope access
         $webhookId = isset($event['webhook_id']) && is_scalar($event['webhook_id']) ? (int)$event['webhook_id'] : 0;
@@ -145,7 +131,7 @@ final class WebhookEventController
         $merchantIdVal = is_array($webhook) && isset($webhook['merchant_id']) ? $webhook['merchant_id'] : 0;
         $merchantId = is_scalar($merchantIdVal) ? (int)$merchantIdVal : 0;
 
-        if (!is_array($webhook) || (!$isSuperadmin && $merchantId !== $mid)) {
+        if (!is_array($webhook) || (!$isGlobal && $merchantId !== $mid)) {
             $this->session->flashError('Unauthorized access to webhook details.');
             return Response::redirect('/admin/webhooks/events');
         }
@@ -176,20 +162,13 @@ final class WebhookEventController
             return Response::redirect('/admin/webhooks/events');
         }
 
-        $isSuperadmin = $this->session->isSuperadmin();
-        $mid = null;
-
-        if (!$isSuperadmin) {
-            $brand = $this->c->get(BrandContext::class);
-            if (!$brand instanceof BrandContext) {
-                throw new \RuntimeException('BrandContext service unavailable');
-            }
-            $brand->resolveFromRequest($req);
-            $mid = $brand->getActiveBrandId();
-            if ($mid === null) {
-                throw new \RuntimeException('No active brand found.');
-            }
+        $brand = $this->c->get(BrandContext::class);
+        if (!$brand instanceof BrandContext) {
+            throw new \RuntimeException('BrandContext service unavailable');
         }
+        $brand->resolveFromRequest($req);
+        $isGlobal = $this->isGlobalBrandView();
+        $mid = $isGlobal ? null : $brand->getActiveBrandId();
 
         // Verify brand scope access
         $webhookId = isset($event['webhook_id']) && is_scalar($event['webhook_id']) ? (int)$event['webhook_id'] : 0;
@@ -201,7 +180,7 @@ final class WebhookEventController
         $merchantIdVal = is_array($webhook) && isset($webhook['merchant_id']) ? $webhook['merchant_id'] : 0;
         $merchantId = is_scalar($merchantIdVal) ? (int)$merchantIdVal : 0;
 
-        if (!is_array($webhook) || (!$isSuperadmin && $merchantId !== $mid)) {
+        if (!is_array($webhook) || (!$isGlobal && $merchantId !== $mid)) {
             $this->session->flashError('Unauthorized access to webhook details.');
             return Response::redirect('/admin/webhooks/events');
         }

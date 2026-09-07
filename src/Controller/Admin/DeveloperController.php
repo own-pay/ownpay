@@ -4,12 +4,16 @@ declare(strict_types=1);
 namespace OwnPay\Controller\Admin;
 
 use OwnPay\Container;
+use OwnPay\Core\Database;
 use OwnPay\Http\Request;
 use OwnPay\Http\Response;
+use OwnPay\Repository\RateLimitRepository;
+use OwnPay\Repository\SettingsRepository;
+use OwnPay\Repository\WebhookRepository;
 use OwnPay\Service\Admin\AdminSession;
 use OwnPay\Service\Brand\BrandContext;
 use OwnPay\Service\Customer\ApiKeyService;
-use OwnPay\Repository\SettingsRepository;
+use OwnPay\Service\Domain\DomainUrlService;
 
 /**
  * Class DeveloperController
@@ -60,72 +64,131 @@ final class DeveloperController
             throw new \RuntimeException('BrandContext service unavailable');
         }
         $brand->resolveFromRequest($req);
-        // All Brands view manages platform-owned API keys; a brand view manages its own.
+        $isGlobal = $this->isGlobalBrandView();
         $mid = $brand->getWriteMerchantId();
+        $activeBrand = $brand->getActiveBrand();
+
+        $db = $this->c->get(Database::class);
+        if (!$db instanceof Database) {
+            throw new \RuntimeException('Database service unavailable');
+        }
 
         $apiKeySvc = $this->c->get(ApiKeyService::class);
         if (!$apiKeySvc instanceof ApiKeyService) {
             throw new \RuntimeException('ApiKeyService service unavailable');
         }
-        $apiKeys = $apiKeySvc->listAll($mid);
+
+        // 1. API Keys: Global view displays all keys with brand names; brand view displays only scoped keys.
+        if ($isGlobal) {
+            $rawKeys = $db->fetchAll(
+                "SELECT k.id, k.name, k.key_prefix, k.scopes, k.last_used_at, k.expires_at, k.status, k.created_at, m.name AS brand_name
+                 FROM op_api_keys k
+                 LEFT JOIN op_merchants m ON k.merchant_id = m.id
+                 ORDER BY k.created_at DESC LIMIT 100"
+            );
+            $apiKeys = array_map(function (array $key) {
+                if (isset($key['scopes']) && is_string($key['scopes'])) {
+                    $key['scopes'] = json_decode($key['scopes'], true);
+                }
+                if (!is_array($key['scopes'] ?? null)) {
+                    $key['scopes'] = [];
+                }
+                return $key;
+            }, $rawKeys);
+        } else {
+            $apiKeys = $apiKeySvc->listAll($mid);
+        }
 
         $settings = $this->c->get(SettingsRepository::class);
         if (!$settings instanceof SettingsRepository) {
             throw new \RuntimeException('SettingsRepository service unavailable');
         }
-        $webhookUrlVal    = $settings->get('general', 'webhook_url', '');
-        $webhookUrl       = is_string($webhookUrlVal) ? $webhookUrlVal : '';
-        $webhookSecretVal = $settings->get('general', 'webhook_secret', '');
-        $webhookSecret    = is_string($webhookSecretVal) ? $webhookSecretVal : '';
-        $apiRateLimitVal  = $settings->get('general', 'api_rate_limit', '60');
-        $apiRateLimit     = is_string($apiRateLimitVal) ? $apiRateLimitVal : '60';
-        $whitelistVal     = $settings->get('general', 'rate_limit_whitelist_ips', '');
-        $whitelist        = is_string($whitelistVal) ? $whitelistVal : '';
-        $rulesJsonVal     = $settings->get('general', 'rate_limit_rules', '[]');
-        $rulesJson        = is_string($rulesJsonVal) ? $rulesJsonVal : '[]';
-        $rules            = json_decode($rulesJson, true);
-        if (!is_array($rules)) {
-            $rules = [];
-        }
-        $baseUrlVal       = $settings->get('general', 'base_url', '');
-        $baseUrl          = is_string($baseUrlVal) ? $baseUrlVal : '';
 
-        if (empty($baseUrl)) {
-            $baseUrl = ($req->isSecure() ? 'https' : 'http') . '://' . ($req->header('Host') ?: 'localhost');
-        }
-
-        // All public API endpoints for reference
-        $endpoints = $this->getEndpointReference($baseUrl);
-
-        // Fetch active rate limits from database
-        $rateLimitRepo = $this->c->get(\OwnPay\Repository\RateLimitRepository::class);
-        if (!$rateLimitRepo instanceof \OwnPay\Repository\RateLimitRepository) {
-            throw new \RuntimeException('RateLimitRepository service unavailable');
-        }
-        $db = $rateLimitRepo->getDatabase();
-        $now = time();
-        $activeLimits = $db->fetchAll(
-            "SELECT * FROM op_rate_limits WHERE expires_at > :now ORDER BY expires_at ASC LIMIT 100",
-            ['now' => $now]
-        );
-
-        // Fetch multiple distinct webhooks
-        $webhookRepo = $this->c->get(\OwnPay\Repository\WebhookRepository::class);
-        if (!$webhookRepo instanceof \OwnPay\Repository\WebhookRepository) {
+        // 2. Webhooks: Global view displays all registered endpoints; brand view scopes strictly to $mid.
+        $webhookRepo = $this->c->get(WebhookRepository::class);
+        if (!$webhookRepo instanceof WebhookRepository) {
             throw new \RuntimeException('WebhookRepository service unavailable');
         }
-        $webhooksListPaginated = $webhookRepo->forTenant($mid)->paginate(1, 100);
-        $webhooksList = $webhooksListPaginated['items'];
+        if ($isGlobal) {
+            $webhooksList = $db->fetchAll(
+                "SELECT w.*, m.name AS brand_name
+                 FROM op_webhooks w
+                 LEFT JOIN op_merchants m ON w.merchant_id = m.id
+                 ORDER BY w.id DESC LIMIT 100"
+            );
+        } else {
+            $webhooksListPaginated = $webhookRepo->forTenant($mid)->paginateScoped(1, 100);
+            $webhooksList = $webhooksListPaginated['items'];
+        }
 
         // Decode events field for Twig compatibility
-        $webhooksList = array_map(function (array $wh) {
-            $evtVal = $wh['events'] ?? '[]';
-            $decoded = json_decode(is_string($evtVal) ? $evtVal : '[]', true);
-            $wh['decoded_events'] = is_array($decoded) ? $decoded : [];
-            return $wh;
-        }, $webhooksList);
+        $formattedWebhooks = [];
+        if (is_iterable($webhooksList)) {
+            foreach ($webhooksList as $wh) {
+                if (!is_array($wh)) {
+                    continue;
+                }
+                $evtVal = $wh['events'] ?? '[]';
+                $decoded = json_decode(is_string($evtVal) ? $evtVal : '[]', true);
+                $wh['decoded_events'] = is_array($decoded) ? $decoded : [];
+                $formattedWebhooks[] = $wh;
+            }
+        }
+        $webhooksList = $formattedWebhooks;
 
+        // 3. Webhook signing secret: resolve from brand store profile first, then scoped settings fallback.
+        $merchantWebhookSecret = '';
+        if (!$isGlobal && is_array($activeBrand) && isset($activeBrand['webhook_secret']) && is_string($activeBrand['webhook_secret'])) {
+            $merchantWebhookSecret = $activeBrand['webhook_secret'];
+        }
+        if ($merchantWebhookSecret === '') {
+            $scopedSecret = $settings->getScoped('general', 'webhook_secret', $mid, '');
+            $merchantWebhookSecret = is_string($scopedSecret) ? $scopedSecret : '';
+        }
 
+        $webhookUrlVal = $settings->getScoped('general', 'webhook_url', $mid, '');
+        $webhookUrl    = is_string($webhookUrlVal) ? $webhookUrlVal : '';
+
+        // 4. Base URL: resolve white-labeled custom domain for active brand, or platform default.
+        $baseUrl = '';
+        if ($this->c->has(DomainUrlService::class)) {
+            $urlSvc = $this->c->get(DomainUrlService::class);
+            if ($urlSvc instanceof DomainUrlService) {
+                $baseUrl = $urlSvc->resolveBaseUrl($isGlobal ? 0 : $mid, $req);
+            }
+        }
+        if ($baseUrl === '') {
+            $baseUrlVal = $settings->getScoped('general', 'base_url', $mid, '');
+            $baseUrl = is_string($baseUrlVal) && $baseUrlVal !== ''
+                ? $baseUrlVal
+                : (($req->isSecure() ? 'https' : 'http') . '://' . ($req->header('Host') ?: 'localhost'));
+        }
+
+        // Public API endpoint reference
+        $endpoints = $this->getEndpointReference($baseUrl);
+
+        // 5. Rate Limits: Infrastructure-level feature - only loaded for superadmins in Global View.
+        $apiRateLimit = '60';
+        $whitelist = '';
+        $rules = [];
+        $activeLimits = [];
+        $now = time();
+
+        if ($isGlobal && $this->session->isSuperadmin()) {
+            $apiRateLimitVal = $settings->get('general', 'api_rate_limit', '60');
+            $apiRateLimit    = is_string($apiRateLimitVal) ? $apiRateLimitVal : '60';
+            $whitelistVal    = $settings->get('general', 'rate_limit_whitelist_ips', '');
+            $whitelist       = is_string($whitelistVal) ? $whitelistVal : '';
+            $rulesJsonVal    = $settings->get('general', 'rate_limit_rules', '[]');
+            $rulesJson       = is_string($rulesJsonVal) ? $rulesJsonVal : '[]';
+            $rulesDecoded    = json_decode($rulesJson, true);
+            $rules           = is_array($rulesDecoded) ? $rulesDecoded : [];
+
+            $activeLimits = $db->fetchAll(
+                "SELECT * FROM op_rate_limits WHERE expires_at > :now ORDER BY expires_at ASC LIMIT 100",
+                ['now' => $now]
+            );
+        }
 
         // Consume one-time generated API key from session (shown once, then gone)
         $generatedKey = $_SESSION['_generated_api_key'] ?? null;
@@ -135,7 +198,8 @@ final class DeveloperController
         return $this->renderAdminPage('admin/developer/index.twig', [
             'api_keys'                 => $apiKeys,
             'webhook_url'              => $webhookUrl,
-            'webhook_secret'           => $webhookSecret,
+            'webhook_secret'           => $merchantWebhookSecret,
+            'merchant_webhook_secret'  => $merchantWebhookSecret,
             'api_rate_limit'           => $apiRateLimit,
             'rate_limit_whitelist_ips' => $whitelist,
             'rate_limit_rules'         => $rules,
@@ -143,10 +207,11 @@ final class DeveloperController
             'endpoints'                => $endpoints,
             'active_page'              => 'developer',
             'generated_key'            => $generatedKey,
-            'generated_key_label' => $generatedKeyLabel,
-            'active_limits'       => $activeLimits,
-            'now'                 => $now,
-            'webhooks'            => $webhooksList,
+            'generated_key_label'      => $generatedKeyLabel,
+            'active_limits'            => $activeLimits,
+            'now'                      => $now,
+            'webhooks'                 => $webhooksList,
+            'is_global_view'           => $isGlobal,
         ]);
     }
 
@@ -164,16 +229,79 @@ final class DeveloperController
             throw new \RuntimeException('BrandContext service unavailable');
         }
         $brand->resolveFromRequest($req);
+        $isGlobal = $this->isGlobalBrandView();
+        $mid = $isGlobal ? $brand->getPlatformId() : ($brand->getActiveBrandId() ?? $brand->getPlatformId());
+        $activeBrand = $brand->getActiveBrand();
 
         $settings = $this->c->get(SettingsRepository::class);
         if (!$settings instanceof SettingsRepository) {
             throw new \RuntimeException('SettingsRepository service unavailable');
         }
-        $webhookUrlVal = $settings->get('general', 'webhook_url', '');
-        $webhookUrl = is_string($webhookUrlVal) ? $webhookUrlVal : '';
+
+        $webhookRepo = $this->c->get(WebhookRepository::class);
+        if (!$webhookRepo instanceof WebhookRepository) {
+            throw new \RuntimeException('WebhookRepository service unavailable');
+        }
+
+        $db = $this->c->get(Database::class);
+        if (!$db instanceof Database) {
+            throw new \RuntimeException('Database service unavailable');
+        }
+
+        $webhookUrl = '';
+        $secret = '';
+
+        // 1. If explicit webhook_id is provided, test that endpoint
+        $webhookIdVal = $req->post('webhook_id', 0);
+        $webhookId = is_numeric($webhookIdVal) ? (int) $webhookIdVal : 0;
+        if ($webhookId > 0) {
+            $scopedRepo = $isGlobal ? $webhookRepo->forAllTenants() : $webhookRepo->forTenant($mid);
+            $wh = $scopedRepo->findScoped($webhookId);
+            if ($wh) {
+                $webhookUrl = is_scalar($wh['url'] ?? null) ? (string) $wh['url'] : '';
+                $secret     = is_scalar($wh['secret'] ?? null) ? (string) $wh['secret'] : '';
+            }
+        }
+
+        // 2. If explicit url is provided in request body
+        if ($webhookUrl === '') {
+            $postUrl = $req->post('url', '');
+            if (is_string($postUrl) && trim($postUrl) !== '') {
+                $webhookUrl = trim($postUrl);
+            }
+        }
+
+        // 3. Fall back to active brand's first configured webhook endpoint
+        if ($webhookUrl === '') {
+            $wh = $db->fetchOne(
+                "SELECT * FROM op_webhooks WHERE merchant_id = :mid AND status = 'active' ORDER BY id DESC LIMIT 1",
+                ['mid' => $mid]
+            );
+            if (is_array($wh)) {
+                $webhookUrl = is_scalar($wh['url'] ?? null) ? (string) $wh['url'] : '';
+                $secret     = is_scalar($wh['secret'] ?? null) ? (string) $wh['secret'] : '';
+            }
+        }
+
+        // 4. Fall back to general webhook settings
+        if ($webhookUrl === '') {
+            $webhookUrlVal = $settings->getScoped('general', 'webhook_url', $mid, '');
+            $webhookUrl = is_string($webhookUrlVal) ? $webhookUrlVal : '';
+        }
 
         if (empty($webhookUrl)) {
             return Response::json(['success' => false, 'error' => 'No webhook URL configured']);
+        }
+
+        // Resolve signing secret if not already set from endpoint record
+        if ($secret === '') {
+            if (!$isGlobal && is_array($activeBrand) && isset($activeBrand['webhook_secret']) && is_string($activeBrand['webhook_secret'])) {
+                $secret = $activeBrand['webhook_secret'];
+            }
+            if ($secret === '') {
+                $secretVal = $settings->getScoped('general', 'webhook_secret', $mid, '');
+                $secret = is_string($secretVal) ? $secretVal : '';
+            }
         }
 
         // Resolve and pin a validated public IP. This both rejects private/loopback
@@ -199,9 +327,7 @@ final class DeveloperController
             return Response::json(['success' => false, 'error' => 'Failed to serialize webhook payload']);
         }
 
-        $secretVal = $settings->get('general', 'webhook_secret', '');
-        $secret = is_string($secretVal) ? $secretVal : '';
-        $sig    = hash_hmac('sha256', $payload, $secret);
+        $sig = hash_hmac('sha256', $payload, $secret);
 
         $ch = curl_init($webhookUrl);
         $curlOptions = [
@@ -236,9 +362,10 @@ final class DeveloperController
         }
 
         return Response::json([
-            'success'     => $httpCode >= 200 && $httpCode < 300,
-            'http_status' => $httpCode,
-            'response'    => mb_substr((string) $response, 0, 500),
+            'success'       => $httpCode >= 200 && $httpCode < 300,
+            'http_status'   => $httpCode,
+            'response_code' => $httpCode,
+            'response'      => mb_substr((string) $response, 0, 500),
         ]);
     }
 
@@ -306,9 +433,14 @@ final class DeveloperController
      */
     public function resetLimit(Request $req): Response
     {
-        if (!$this->session->isSuperadmin()) {
-            $this->session->flashError("Permission denied. Only Super Admins can reset rate limits.");
-            return Response::redirect('/admin/developer#rate-limits');
+        $brand = $this->c->get(BrandContext::class);
+        if ($brand instanceof BrandContext) {
+            $brand->resolveFromRequest($req);
+        }
+
+        if (!$this->session->isSuperadmin() || !$this->isGlobalBrandView()) {
+            $this->session->flashError("Permission denied. Rate limits can only be managed in Global View by Super Admins.");
+            return Response::redirect('/admin/developer');
         }
 
         $keyVal = $req->post('key', '');
@@ -337,19 +469,24 @@ final class DeveloperController
             }
         }
 
-        return Response::redirect('/admin/developer#rate-limits');
+        return Response::redirect('/admin/developer');
     }
 
     /**
      * Saves the rate limit whitelist and rules settings.
      *
-     * Only accessible by Super Admins.
+     * Only accessible by Super Admins in Global View.
      */
     public function saveSettings(Request $req): Response
     {
-        if (!$this->session->isSuperadmin()) {
-            $this->session->flashError("Permission denied. Only Super Admins can configure rate limits.");
-            return Response::redirect('/admin/developer#rate-limits');
+        $brand = $this->c->get(BrandContext::class);
+        if ($brand instanceof BrandContext) {
+            $brand->resolveFromRequest($req);
+        }
+
+        if (!$this->session->isSuperadmin() || !$this->isGlobalBrandView()) {
+            $this->session->flashError("Permission denied. Rate limits can only be configured in Global View by Super Admins.");
+            return Response::redirect('/admin/developer');
         }
 
         $settings = $this->c->get(SettingsRepository::class);

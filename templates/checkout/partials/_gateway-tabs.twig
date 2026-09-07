@@ -8,24 +8,25 @@
 {% set hasCards = gateways.global|default([]) is not empty %}
 {% set hasMfs = gateways.mfs|default([]) is not empty %}
 {% set hasBank = gateways.bank|default([]) is not empty %}
+{% set defaultTab = hasCards ? 'cards' : (hasMfs ? 'mfs' : (hasBank ? 'bank' : 'cards')) %}
 {% set tabCount = (hasCards ? 1 : 0) + (hasMfs ? 1 : 0) + (hasBank ? 1 : 0) %}
 
 {% if tabCount > 1 %}
 <div class="ck-tabs ck-fi">
     {% if hasCards %}
-    <button type="button" class="ck-tab {{ hasCards ? 'on' : '' }}" data-t="cards" data-action="go-tab" data-tab-name="cards">
+    <button type="button" class="ck-tab {{ defaultTab == 'cards' ? 'on' : '' }}" data-t="cards" data-action="go-tab" data-tab-name="cards">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
         {{ lang.cards ?? 'Cards' }}
     </button>
     {% endif %}
     {% if hasMfs %}
-    <button type="button" class="ck-tab {{ not hasCards and hasMfs ? 'on' : '' }}" data-t="mfs" data-action="go-tab" data-tab-name="mfs">
+    <button type="button" class="ck-tab {{ defaultTab == 'mfs' ? 'on' : '' }}" data-t="mfs" data-action="go-tab" data-tab-name="mfs">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
         MFS
     </button>
     {% endif %}
     {% if hasBank %}
-    <button type="button" class="ck-tab {{ not hasCards and not hasMfs and hasBank ? 'on' : '' }}" data-t="bank" data-action="go-tab" data-tab-name="bank">
+    <button type="button" class="ck-tab {{ defaultTab == 'bank' ? 'on' : '' }}" data-t="bank" data-action="go-tab" data-tab-name="bank">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 21h18"/><path d="M3 10h18"/><path d="M5 6l7-3 7 3"/><line x1="4" y1="10" x2="4" y2="21"/><line x1="20" y1="10" x2="20" y2="21"/><line x1="8" y1="14" x2="8" y2="17"/><line x1="12" y1="14" x2="12" y2="17"/><line x1="16" y1="14" x2="16" y2="17"/></svg>
         {{ lang.net_banking ?? 'Net Banking' }}
     </button>

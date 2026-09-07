@@ -41,7 +41,25 @@
     </div>
 </div>
 
-{% if txn.status == 'pending' %}
+{% if (payment_details is defined and payment_details|length > 0) or (txn.status == 'awaiting_verification') %}
+<div class="op-card op-mt-4">
+    <div class="op-card-header"><h3>Manual Payment Submission Details</h3></div>
+    <div class="op-card-body">
+        {% if payment_details is defined and payment_details|length > 0 %}
+        <dl class="op-detail-list">
+            {% for k, v in payment_details %}
+            <dt>{{ k|replace({'_': ' '})|title }}</dt>
+            <dd><strong>{{ v }}</strong></dd>
+            {% endfor %}
+        </dl>
+        {% else %}
+        <p class="op-text-muted">No custom verification details (TrxID / Sender Number) were submitted by the customer. You can verify the payment against your account statement and mark it completed below.</p>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+{% if txn.status in ['pending', 'awaiting_verification', 'pending_review', 'processing'] %}
 <div class="op-card op-mt-4">
     <div class="op-card-header"><h3>Actions</h3></div>
     <div class="op-card-body">

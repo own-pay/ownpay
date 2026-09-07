@@ -81,6 +81,9 @@ final class InstallerStepGuardTest extends TestCase
         $markerProp = new \ReflectionProperty(InstallerController::class, 'markerFile');
         $markerProp->setValue($controller, $this->tempRoot . '/storage/.installed');
 
+        $probeProp = new \ReflectionProperty(InstallerController::class, 'dbProbeResult');
+        $probeProp->setValue($controller, false);
+
         return $controller;
     }
 }

@@ -281,9 +281,14 @@ final class GatewayController
         $data = is_array($postData) ? $postData : [];
         $instructionsVal = $data['instructions'] ?? '';
         $instructions = $this->buildInstructionsJson(is_string($instructionsVal) ? $instructionsVal : '');
+        $paymentNumberVal = $data['payment_number'] ?? '';
+        $paymentNumber = InputSanitizer::string(is_string($paymentNumberVal) ? $paymentNumberVal : '');
 
         // Account-level fields only (brand-editable); the TYPE is owned by the platform template.
-        $account = ['instructions' => $instructions];
+        $account = [
+            'instructions'   => $instructions,
+            'payment_number' => $paymentNumber !== '' ? $paymentNumber : null,
+        ];
         $this->applyUploads($account);
 
         if ($existing !== null) {

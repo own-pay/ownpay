@@ -173,7 +173,10 @@ class Database
         }
 
         $pdo = new PDO($dsn, $user, $pass, $merged);
-        self::$instance = new self($pdo);
+        $prefix = is_string($_ENV['DB_PREFIX'] ?? null) && $_ENV['DB_PREFIX'] !== ''
+            ? $_ENV['DB_PREFIX']
+            : (getenv('DB_PREFIX') ?: 'op_');
+        self::$instance = new self($pdo, $prefix);
         return self::$instance;
     }
 
