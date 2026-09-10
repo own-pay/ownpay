@@ -20,6 +20,6 @@
     "jsdom": "^29.1.1",
     "stylelint": "^16.14.1",
     "stylelint-config-standard": "^36.0.1",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.11"
   }
 }
